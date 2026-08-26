@@ -28,12 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           submodules: false
 
       - name: Placeholder agent step
+        # force_fail is always compared as the literal string "true"; do not treat as a real boolean
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.client_payload.issue_number || github.event.inputs.issue_number }}
