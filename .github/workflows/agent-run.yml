@@ -1,0 +1,56 @@
+name: Agent Run
+
+on:
+  repository_dispatch:
+    types: [agent-run]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to comment on
+        required: true
+        type: string
+      message:
+        description: Message to post, traceable back to this dispatch
+        required: true
+        type: string
+      force_fail:
+        description: Force the placeholder step to fail before posting
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      - name: Placeholder agent step
+        # force_fail is always compared as the literal string "true"; do not treat as a real boolean
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number || github.event.inputs.issue_number }}
+          MESSAGE: ${{ github.event.client_payload.message || github.event.inputs.message }}
+          FORCE_FAIL: ${{ github.event.client_payload.force_fail || github.event.inputs.force_fail }}
+        run: |
+          if [ "$FORCE_FAIL" = "true" ]; then
+            echo "force_fail is set; failing before any side effect"
+            exit 1
+          fi
+
+          gh issue comment "$ISSUE_NUMBER" --repo "${{ github.repository }}" --body "$(cat <<EOF
+          Tracer bullet run.
+
+          Event: ${{ github.event_name }}
+          Run ID: ${{ github.run_id }}
+          Payload message: $MESSAGE
+          EOF
+          )"
