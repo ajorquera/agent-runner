@@ -15,9 +15,8 @@ notified when the run finishes (there is no status-polling API — see
 Using `gh`:
 
 ```sh
-gh api repos/ajorquera/agent-runner/dispatches \
+GH_TOKEN="$TRIGGER_TOKEN" gh api repos/ajorquera/agent-runner/dispatches \
   --method POST \
-  -H "Authorization: Bearer $TRIGGER_TOKEN" \
   -f event_type=agent-run \
   -f 'client_payload[prompt]=<your task prompt>'
 ```
@@ -32,8 +31,8 @@ curl -X POST \
   -d '{"event_type":"agent-run","client_payload":{"prompt":"<your task prompt>"}}'
 ```
 
-`$TRIGGER_TOKEN` is a fine-grained GitHub PAT scoped to `Contents:write` on
-this repo only. Bare possession of the token is treated as sufficient
+`$TRIGGER_TOKEN` is a fine-grained GitHub PAT scoped to **Contents: Read and
+write** on this repo only. Bare possession of the token is treated as sufficient
 authorization to fire a run — there is no additional workflow-side
 validation, and the free-form prompt is passed straight into the agent with
 permission checks disabled. **Treat it like a credential that can execute
