@@ -55,6 +55,8 @@ Detail: [issue #8](https://github.com/ajorquera/agent-runner/issues/8).
 
 A single shared trigger token, used by all callers, kept separate from the agent's own PAT — for audit trail and independent rotation, not privilege separation (the caller already controls the free-form payload). Bare possession of the token = authorized; no additional validation. Scope: `Contents:write` only. Same 1-year/manual rotation as the secrets PAT. Token custody is the caller's own responsibility — out of scope here.
 
+Caller-facing usage docs and issuance/rotation record: [docs/triggering.md](triggering.md).
+
 Detail: [issue #9](https://github.com/ajorquera/agent-runner/issues/9).
 
 ## Cost / concurrency caps

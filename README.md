@@ -25,6 +25,8 @@ primary-source research behind the design decisions so far.
   hosted runners.
 - `docs/agents/` — how agent skills should use this repo (issue tracker, triage labels, domain
   docs).
+- `docs/triggering.md` — how to fire an agent run via `repository_dispatch`, trigger-token
+  custody/rotation policy, and provisioning steps for the repo owner.
 
 ## Contributing
 
