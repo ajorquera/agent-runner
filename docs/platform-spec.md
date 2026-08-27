@@ -75,6 +75,21 @@ Detail: [issue #11](https://github.com/ajorquera/agent-runner/issues/11).
 
 - **GitHub webhook auto-trigger** — the destination names manual/API trigger as required for v1; event-driven webhook trigger is an extension point, not required now.
 
+## Testing
+
+Black box, at the trigger boundary only — the seam a real caller uses, not the
+workflow's internal steps. `scripts/test-agent-run.sh` fires a
+`repository_dispatch` the same way a caller would, polls `gh run view --json
+conclusion` for a terminal result, and asserts the GitHub-visible side effect
+the dispatched prompt asked for (a PR with a unique marker in its title). Run
+it with `success` or `failure` to exercise each scenario. Requires a
+maintainer-scoped `gh` auth (Actions + PR read), not the caller-facing
+`TRIGGER_TOKEN` — that token can only dispatch, not poll runs or read PRs.
+
+Not covered, deliberately (platform guarantees / config facts, not
+agent-runner behavior): secret masking, PAT scope enforcement, checkout
+depth, runner tier.
+
 ## Status
 
 No open decisions remain. All ten map tickets are closed; the map ([issue #1](https://github.com/ajorquera/agent-runner/issues/1)) carries no unresolved fog. Ready to build from.
