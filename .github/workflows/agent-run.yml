@@ -9,13 +9,46 @@ on:
         description: Free-form task prompt for the agent
         required: true
         type: string
+      timeout_minutes:
+        description: Job timeout in minutes
+        required: false
+        type: string
+        default: "20"
+      max_concurrent:
+        description: Max simultaneous runs (concurrency bucket count)
+        required: false
+        type: string
+        default: "10"
+      runner:
+        description: Runner label for the run job
+        required: false
+        type: string
+        default: ubuntu-latest
 
 permissions:
   contents: read
 
 jobs:
-  run:
+  bucket:
     runs-on: ubuntu-latest
+    outputs:
+      group: ${{ steps.calc.outputs.group }}
+    steps:
+      - id: calc
+        env:
+          MAX_CONCURRENT: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.max_concurrent) || '10' }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          bucket=$(( RUN_ID % MAX_CONCURRENT ))
+          echo "group=agent-run-${bucket}" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: bucket
+    concurrency:
+      group: ${{ needs.bucket.outputs.group }}
+      cancel-in-progress: false
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.runner) || 'ubuntu-latest' }}
+    timeout-minutes: ${{ fromJSON((github.event_name == 'workflow_dispatch' && github.event.inputs.timeout_minutes) || '20') }}
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GH_TOKEN: ${{ secrets.REPO_PAT }}
