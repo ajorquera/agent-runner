@@ -31,12 +31,26 @@ curl -X POST \
   -d '{"event_type":"agent-run","client_payload":{"prompt":"<your task prompt>"}}'
 ```
 
-If `client_payload` includes `phase` and `issue_number`, the workflow treats
-this as an `ajorquera/new` agent-phase run: after the agent finishes, it reads
-the `AGENT_OUTCOME:` line from the agent's own output and updates that issue's
-`agent:*` labels on `ajorquera/new` accordingly (see
-`.github/workflows/agent-run.yml`'s "Update issue labels" step for the table).
-Omit both fields for a plain one-off run with no label side effects.
+### Optional: outcome-driven label update
+
+If your agent's final message ends with a line of the form
+`AGENT_OUTCOME: <TOKEN>`, the workflow can turn that into a GitHub issue label
+change on your own repo once the run finishes — this repo doesn't know or
+care what the tokens or labels mean, it just executes the diff you give it.
+Include these `client_payload` fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `issue_repo` | string | `owner/repo` of the issue to edit. Omit this (or `issue_number`) to skip label updates entirely. |
+| `issue_number` | number | Issue/PR number on `issue_repo`. |
+| `always_remove_labels` | JSON array (as a string) | Labels removed unconditionally before looking at the outcome, e.g. `'["agent:in-progress"]'`. |
+| `outcome_labels` | JSON object (as a string) | Maps each possible `AGENT_OUTCOME` token to `{"remove": [...], "add": [...]}`. |
+| `fallback_labels` | JSON object (as a string) | Same shape, applied instead when claude exits nonzero or no `AGENT_OUTCOME:` line is found (crash, unrecoverable error, or the token isn't a key in `outcome_labels`). |
+
+Example: a caller running a 3-state pipeline (`READY` → next stage,
+`BLOCKED` → human) would pass
+`outcome_labels='{"READY":{"remove":["stage:a"],"add":["stage:b"]},"BLOCKED":{"remove":["stage:a"],"add":["needs-human"]}}'`
+and `fallback_labels='{"remove":[],"add":["needs-human"]}'`.
 
 `$TRIGGER_TOKEN` is a fine-grained GitHub PAT scoped to **Contents: Read and
 write** on this repo only. Bare possession of the token is treated as sufficient

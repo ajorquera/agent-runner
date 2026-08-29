@@ -82,30 +82,31 @@ jobs:
           echo "outcome=${outcome}" >> "$GITHUB_OUTPUT"
 
       - name: Update issue labels
-        if: always() && github.event_name == 'repository_dispatch'
+        if: always() && github.event.client_payload.issue_repo != '' && github.event.client_payload.issue_number != ''
         env:
-          REPO: ajorquera/new
-          PHASE: ${{ github.event.client_payload.phase }}
+          ISSUE_REPO: ${{ github.event.client_payload.issue_repo }}
           ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+          ALWAYS_REMOVE_LABELS: ${{ github.event.client_payload.always_remove_labels }}
+          OUTCOME_LABELS: ${{ github.event.client_payload.outcome_labels }}
+          FALLBACK_LABELS: ${{ github.event.client_payload.fallback_labels }}
           CLAUDE_STATUS: ${{ steps.run.outputs.claude_status }}
           OUTCOME: ${{ steps.run.outputs.outcome }}
         run: |
-          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:in-progress
+          echo "${ALWAYS_REMOVE_LABELS:-[]}" | jq -r '.[]? // empty' | while IFS= read -r label; do
+            gh issue edit "$ISSUE_NUMBER" --repo "$ISSUE_REPO" --remove-label "$label"
+          done
 
-          if [ "$CLAUDE_STATUS" != "0" ] || [ -z "$OUTCOME" ]; then
-            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label agent:needs-human
-            exit 0
+          diff=""
+          if [ "$CLAUDE_STATUS" = "0" ] && [ -n "$OUTCOME" ]; then
+            diff=$(echo "${OUTCOME_LABELS:-{}}" | jq -c --arg k "$OUTCOME" '.[$k] // empty')
+          fi
+          if [ -z "$diff" ]; then
+            diff="${FALLBACK_LABELS:-{}}"
           fi
 
-          case "${PHASE}:${OUTCOME}" in
-            explore:READY)                    gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:explore    --add-label agent:design ;;
-            explore:BLOCKED)                  gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:explore    --add-label agent:needs-human ;;
-            design:READY)                      gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:design     --add-label agent:implement ;;
-            design:BLOCKED)                    gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:design     --add-label agent:needs-human ;;
-            implement:READY)                   gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:implement  --add-label agent:review ;;
-            implement:BLOCKED)                 gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:implement  --add-label agent:needs-human ;;
-            review:APPROVED)                   : ;;
-            review:CHANGES_REQUESTED)          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:review     --add-label agent:implement ;;
-            review:CHANGES_REQUESTED_CAPPED)   gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:review     --add-label agent:needs-human ;;
-            *)                                 gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label agent:needs-human ;;
-          esac
+          echo "$diff" | jq -r '.remove[]? // empty' | while IFS= read -r label; do
+            gh issue edit "$ISSUE_NUMBER" --repo "$ISSUE_REPO" --remove-label "$label"
+          done
+          echo "$diff" | jq -r '.add[]? // empty' | while IFS= read -r label; do
+            gh issue edit "$ISSUE_NUMBER" --repo "$ISSUE_REPO" --add-label "$label"
+          done
