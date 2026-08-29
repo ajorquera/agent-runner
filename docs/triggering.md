@@ -31,6 +31,13 @@ curl -X POST \
   -d '{"event_type":"agent-run","client_payload":{"prompt":"<your task prompt>"}}'
 ```
 
+If `client_payload` includes `phase` and `issue_number`, the workflow treats
+this as an `ajorquera/new` agent-phase run: after the agent finishes, it reads
+the `AGENT_OUTCOME:` line from the agent's own output and updates that issue's
+`agent:*` labels on `ajorquera/new` accordingly (see
+`.github/workflows/agent-run.yml`'s "Update issue labels" step for the table).
+Omit both fields for a plain one-off run with no label side effects.
+
 `$TRIGGER_TOKEN` is a fine-grained GitHub PAT scoped to **Contents: Read and
 write** on this repo only. Bare possession of the token is treated as sufficient
 authorization to fire a run — there is no additional workflow-side

@@ -71,7 +71,41 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run agent
+        id: run
         env:
           TASK_PROMPT: ${{ github.event_name == 'repository_dispatch' && toJSON(github.event.client_payload) || github.event.inputs.prompt }}
         run: |
-          claude -p "$TASK_PROMPT" --dangerously-skip-permissions
+          claude -p "$TASK_PROMPT" --dangerously-skip-permissions | tee "$RUNNER_TEMP/agent_output.log" || true
+          claude_status="${PIPESTATUS[0]}"
+          outcome=$(grep -o 'AGENT_OUTCOME: [A-Za-z_]*' "$RUNNER_TEMP/agent_output.log" | tail -1 | cut -d' ' -f2)
+          echo "claude_status=${claude_status}" >> "$GITHUB_OUTPUT"
+          echo "outcome=${outcome}" >> "$GITHUB_OUTPUT"
+
+      - name: Update issue labels
+        if: always() && github.event_name == 'repository_dispatch'
+        env:
+          REPO: ajorquera/new
+          PHASE: ${{ github.event.client_payload.phase }}
+          ISSUE_NUMBER: ${{ github.event.client_payload.issue_number }}
+          CLAUDE_STATUS: ${{ steps.run.outputs.claude_status }}
+          OUTCOME: ${{ steps.run.outputs.outcome }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:in-progress
+
+          if [ "$CLAUDE_STATUS" != "0" ] || [ -z "$OUTCOME" ]; then
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label agent:needs-human
+            exit 0
+          fi
+
+          case "${PHASE}:${OUTCOME}" in
+            explore:READY)                    gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:explore    --add-label agent:design ;;
+            explore:BLOCKED)                  gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:explore    --add-label agent:needs-human ;;
+            design:READY)                      gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:design     --add-label agent:implement ;;
+            design:BLOCKED)                    gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:design     --add-label agent:needs-human ;;
+            implement:READY)                   gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:implement  --add-label agent:review ;;
+            implement:BLOCKED)                 gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:implement  --add-label agent:needs-human ;;
+            review:APPROVED)                   : ;;
+            review:CHANGES_REQUESTED)          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:review     --add-label agent:implement ;;
+            review:CHANGES_REQUESTED_CAPPED)   gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label agent:review     --add-label agent:needs-human ;;
+            *)                                 gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label agent:needs-human ;;
+          esac
