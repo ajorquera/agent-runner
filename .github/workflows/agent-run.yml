@@ -85,9 +85,11 @@ jobs:
           CALLBACK_PAYLOAD: ${{ github.event.client_payload.callback_payload }}
         run: |
           outcome=$(grep -oE 'AGENT_OUTCOME:[[:space:]]*[A-Z_]+' "$RUNNER_TEMP/agent_output.log" | tail -1 | sed -E 's/AGENT_OUTCOME:[[:space:]]*//')
+          pr_number=$(grep -oE 'AGENT_PR:[[:space:]]*[0-9]+' "$RUNNER_TEMP/agent_output.log" | tail -1 | sed -E 's/AGENT_PR:[[:space:]]*//')
 
-          gh api "repos/${CALLBACK_REPO}/dispatches" \
-            --method POST \
-            -f event_type="$CALLBACK_EVENT_TYPE" \
-            -f "client_payload[outcome]=${outcome}" \
-            -f "client_payload[callback_payload]=${CALLBACK_PAYLOAD}"
+          args=(--method POST -f event_type="$CALLBACK_EVENT_TYPE" -f "client_payload[outcome]=${outcome}" -f "client_payload[callback_payload]=${CALLBACK_PAYLOAD}")
+          if [ -n "$pr_number" ]; then
+            args+=(-f "client_payload[pr_number]=${pr_number}")
+          fi
+
+          gh api "repos/${CALLBACK_REPO}/dispatches" "${args[@]}"
