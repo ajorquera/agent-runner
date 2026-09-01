@@ -74,4 +74,20 @@ jobs:
         env:
           TASK_PROMPT: ${{ github.event_name == 'repository_dispatch' && toJSON(github.event.client_payload) || github.event.inputs.prompt }}
         run: |
-          claude -p "$TASK_PROMPT" --dangerously-skip-permissions
+          set -o pipefail
+          claude -p "$TASK_PROMPT" --dangerously-skip-permissions | tee "$RUNNER_TEMP/agent_output.log"
+
+      - name: Report outcome
+        if: always() && github.event_name == 'repository_dispatch' && github.event.client_payload.callback_repo != '' && github.event.client_payload.callback_event_type != ''
+        env:
+          CALLBACK_REPO: ${{ github.event.client_payload.callback_repo }}
+          CALLBACK_EVENT_TYPE: ${{ github.event.client_payload.callback_event_type }}
+          CALLBACK_PAYLOAD: ${{ github.event.client_payload.callback_payload }}
+        run: |
+          outcome=$(grep -oE 'AGENT_OUTCOME:[[:space:]]*[A-Z_]+' "$RUNNER_TEMP/agent_output.log" | tail -1 | sed -E 's/AGENT_OUTCOME:[[:space:]]*//')
+
+          gh api "repos/${CALLBACK_REPO}/dispatches" \
+            --method POST \
+            -f event_type="$CALLBACK_EVENT_TYPE" \
+            -f "client_payload[outcome]=${outcome}" \
+            -f "client_payload[callback_payload]=${CALLBACK_PAYLOAD}"
