@@ -85,9 +85,16 @@ jobs:
           CALLBACK_PAYLOAD: ${{ github.event.client_payload.callback_payload }}
         run: |
           outcome=$(grep -oE 'AGENT_OUTCOME:[[:space:]]*[A-Z_]+' "$RUNNER_TEMP/agent_output.log" | tail -1 | sed -E 's/AGENT_OUTCOME:[[:space:]]*//')
+          target=$(grep -oE 'AGENT_COMMENT_TARGET:[[:space:]]*(issue|pr) #[0-9]+' "$RUNNER_TEMP/agent_output.log" | tail -1)
+          target_type=$(sed -E 's/AGENT_COMMENT_TARGET:[[:space:]]*(issue|pr) #[0-9]+/\1/' <<<"$target")
+          target_number=$(sed -E 's/AGENT_COMMENT_TARGET:[[:space:]]*(issue|pr) #([0-9]+)/\2/' <<<"$target")
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
           gh api "repos/${CALLBACK_REPO}/dispatches" \
             --method POST \
             -f event_type="$CALLBACK_EVENT_TYPE" \
             -f "client_payload[outcome]=${outcome}" \
+            -f "client_payload[run_url]=${run_url}" \
+            -f "client_payload[comment_target_type]=${target_type}" \
+            -f "client_payload[comment_target_number]=${target_number}" \
             -f "client_payload[callback_payload]=${CALLBACK_PAYLOAD}"
