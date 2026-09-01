@@ -8,9 +8,29 @@ shared trigger token.
 Runs are kicked off via GitHub's `repository_dispatch` API, using the fixed
 `event_type` `agent-run` (see `.github/workflows/agent-run.yml`). The payload
 is free-form `client_payload` — there's no fixed schema; include whatever the
-task needs, including your own callback instructions if you want to be
-notified when the run finishes (there is no status-polling API — see
-`docs/platform-spec.md`'s "Result capture" section).
+task needs (there is no status-polling API — see `docs/platform-spec.md`'s
+"Result capture" section).
+
+### Callback on completion
+
+If you want a deterministic signal when the run finishes — not dependent on
+the agent itself following instructions — set these three `client_payload`
+fields:
+
+- `callback_repo` — `owner/repo` to dispatch back to.
+- `callback_event_type` — the `event_type` to use for that dispatch.
+- `callback_payload` — an opaque JSON value, yours to shape; it is relayed
+  back unchanged.
+
+When both `callback_repo` and `callback_event_type` are set, the workflow
+greps the agent's final output for a trailing `AGENT_OUTCOME: <WORD>` line,
+then fires `repository_dispatch` at `callback_repo` with
+`client_payload: {outcome: <WORD or empty>, callback_payload: <your value, unchanged>}`.
+This runs even if the agent process fails or never emits the trailer
+(`outcome` comes back empty in that case). Agent-runner never interprets
+`callback_payload` — it exists purely as a passthrough so the caller can
+carry whatever it needs to resolve the outcome, without agent-runner needing
+to know about it (e.g. issue labels, PR numbers, wait handles).
 
 Using `gh`:
 
