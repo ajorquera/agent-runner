@@ -25,8 +25,12 @@ primary-source research behind the design decisions so far.
   hosted runners.
 - `docs/agents/` — how agent skills should use this repo (issue tracker, triage labels, domain
   docs).
-- `docs/triggering.md` — how to fire an agent run via `repository_dispatch`, trigger-token
-  custody/rotation policy, and provisioning steps for the repo owner.
+- `docs/triggering.md` — how to fire an agent run, via the reusable
+  `agent-run-trigger.yml` workflow or directly via `repository_dispatch`,
+  trigger-token custody/rotation policy, and provisioning steps for the repo
+  owner.
+- `docs/default-phases/` — fallback phase instructions the agent uses when a
+  target repo has no `docs/agent-phases/<phase>.md` of its own.
 
 ## Contributing
 

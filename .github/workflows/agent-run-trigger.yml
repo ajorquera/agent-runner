@@ -1,0 +1,150 @@
+name: Agent Run Trigger
+
+# Reusable trigger workflow, called by caller repos via:
+#   uses: ajorquera/agent-runner/.github/workflows/agent-run-trigger.yml@main
+#   secrets:
+#     TRIGGER_TOKEN: ${{ secrets.TRIGGER_TOKEN }}
+#
+# The caller's job carries the `on: issues|pull_request labeled` trigger and
+# the phase-label `if:` gate; this workflow runs inside that same run, so
+# github.event / github.repository below are the caller's, not agent-runner's.
+# See docs/triggering.md for the calling contract.
+
+on:
+  workflow_call:
+    secrets:
+      TRIGGER_TOKEN:
+        required: true
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout agent-runner (for the decide script)
+        uses: actions/checkout@v4
+        with:
+          repository: ajorquera/agent-runner
+          path: agent-runner
+
+      - name: Decide
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          issue_labels=$(gh issue view "${{ github.event.issue.number || github.event.pull_request.number }}" --repo "${{ github.repository }}" --json labels --jq '[.labels[].name] | join(",")')
+          decision=$(agent-runner/scripts/agent-run-trigger-decide.sh "${{ github.event.label.name }}" "$issue_labels")
+          echo "decision=$decision" >> "$GITHUB_OUTPUT"
+
+      - name: Mark in-progress
+        if: steps.guard.outputs.decision == 'dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue edit "${{ github.event.issue.number || github.event.pull_request.number }}" --repo "${{ github.repository }}" --add-label agent:in-progress
+
+      - name: Build task prompt
+        if: steps.guard.outputs.decision == 'dispatch'
+        id: prompt
+        env:
+          LABEL_NAME: ${{ github.event.label.name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          phase="${LABEL_NAME#agent:}"
+          case "$phase" in
+            explore|design)
+              comment_target="issue #${ISSUE_NUMBER}"
+              ;;
+            implement)
+              comment_target="the PR you open or update for this issue (or issue #${ISSUE_NUMBER} if you report BLOCKED and never open one)"
+              ;;
+            review)
+              comment_target="the PR you're reviewing"
+              ;;
+          esac
+          {
+            echo "You are working on the repo ${REPO}, not the repo you were checked out in. First: \`gh repo clone ${REPO}\` into a fresh directory and \`cd\` into it — GH_TOKEN is already set and authorized for this. Do all of the following work from inside that clone."
+            echo
+            echo "Then follow the instructions in \`docs/agent-phases/${phase}.md\` (in the ${REPO} clone) for issue/PR #${ISSUE_NUMBER}. If that file doesn't exist in ${REPO}, follow \`docs/default-phases/${phase}.md\` instead — it's already present in your original working directory (this run's own checkout of ajorquera/agent-runner, before you cloned ${REPO}), not in the ${REPO} clone. If you fall back to the default, say so explicitly in the comment described below (e.g. \"used agent-runner's default ${phase} instructions — ${REPO} has none of its own\"), so it's visible this run didn't follow repo-specific instructions. Either way, end with the phase's trailer line(s) (\`AGENT_PR:\` when a PR exists, then \`AGENT_OUTCOME:\`)."
+            echo
+            echo "Just before that final line, post one more comment on ${comment_target}: the result of this run (the same outcome you're about to report in the \`AGENT_OUTCOME:\` line, plus a one-line reason, plus the default-phase-instructions note above if it applies) and a link to this agent-runner run, so a human can see what happened without digging. Link straight to the \"Run agent\" step, not the run overview — look it up and build it like this (\`GH_TOKEN\`, \`GITHUB_SERVER_URL\`, \`GITHUB_REPOSITORY\`, \`GITHUB_RUN_ID\` are already set in your shell):"
+            echo '```sh'
+            echo 'job_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs" --jq '"'"'.jobs[] | select(.name=="run") | .id'"'"')'
+            echo 'step_number=$(gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${job_id}" --jq '"'"'.steps[] | select(.name=="Run agent") | .number'"'"')'
+            echo 'link="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/job/${job_id}#step:${step_number}:1"'
+            echo '```'
+            echo
+            echo "Last step, after the trailer line(s): apply the matching label change yourself (your GH_TOKEN is already authorized for ${REPO}) — this both records where the issue/PR stands and retriggers the next phase automatically, since it's a real token rather than the default bot token GitHub ignores for that purpose. Run exactly one of the following, whichever matches the outcome you just reported:"
+            echo
+            case "$phase" in
+              explore)
+                echo 'If `AGENT_OUTCOME: READY`:'
+                echo '```sh'
+                echo "gh issue edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label \"agent:explore\" --remove-label \"agent:in-progress\" --add-label \"agent:design\""
+                echo '```'
+                echo
+                echo 'If `AGENT_OUTCOME: BLOCKED`:'
+                echo '```sh'
+                echo "gh issue edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label \"agent:explore\" --remove-label \"agent:in-progress\" --add-label \"agent:needs-human\""
+                echo '```'
+                ;;
+              design)
+                echo 'If `AGENT_OUTCOME: READY`:'
+                echo '```sh'
+                echo "gh issue edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label \"agent:design\" --remove-label \"agent:in-progress\" --add-label \"agent:implement\""
+                echo '```'
+                echo
+                echo 'If `AGENT_OUTCOME: BLOCKED`:'
+                echo '```sh'
+                echo "gh issue edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label \"agent:design\" --remove-label \"agent:in-progress\" --add-label \"agent:needs-human\""
+                echo '```'
+                ;;
+              implement)
+                echo 'If you opened/updated a PR (`AGENT_PR: <pr>` then `AGENT_OUTCOME: READY`) — remove the phase labels from the issue, add the next one to the PR, substituting the PR number from your own `AGENT_PR` line for `<pr>`:'
+                echo '```sh'
+                echo "gh issue edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label \"agent:implement\" --remove-label \"agent:in-progress\""
+                echo "gh pr edit <pr> --repo ${REPO} --add-label \"agent:review\""
+                echo '```'
+                echo
+                echo 'If `AGENT_OUTCOME: BLOCKED` (no PR opened):'
+                echo '```sh'
+                echo "gh issue edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label \"agent:implement\" --remove-label \"agent:in-progress\" --add-label \"agent:needs-human\""
+                echo '```'
+                ;;
+              review)
+                echo 'If `AGENT_OUTCOME: APPROVED`:'
+                echo '```sh'
+                echo "gh pr edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label \"agent:in-progress\""
+                echo '```'
+                echo
+                echo 'If `AGENT_OUTCOME: CHANGES_REQUESTED`:'
+                echo '```sh'
+                echo "gh pr edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label \"agent:review\" --remove-label \"agent:in-progress\" --add-label \"agent:implement\""
+                echo '```'
+                echo
+                echo 'If `AGENT_OUTCOME: CHANGES_REQUESTED_CAPPED`:'
+                echo '```sh'
+                echo "gh pr edit ${ISSUE_NUMBER} --repo ${REPO} --remove-label \"agent:review\" --remove-label \"agent:in-progress\" --add-label \"agent:needs-human\""
+                echo '```'
+                ;;
+            esac
+          } > "$RUNNER_TEMP/task_prompt.md"
+          {
+            echo "prompt<<PROMPT_EOF"
+            cat "$RUNNER_TEMP/task_prompt.md"
+            echo "PROMPT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch agent-runner
+        if: steps.guard.outputs.decision == 'dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.TRIGGER_TOKEN }}
+          TASK_PROMPT: ${{ steps.prompt.outputs.prompt }}
+        run: |
+          gh api repos/ajorquera/agent-runner/dispatches \
+            --method POST \
+            -f event_type=agent-run \
+            -f "client_payload[prompt]=${TASK_PROMPT}"
