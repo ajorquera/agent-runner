@@ -1,7 +1,36 @@
 # Triggering an agent run
 
-How to fire an agent run on this repo from outside GitHub Actions, using the
-shared trigger token.
+How to fire an agent run on this repo, either via a reusable GitHub Actions
+workflow (if the caller is itself a GitHub Actions workflow) or directly via
+the `repository_dispatch` API (any other caller).
+
+## Reusable workflow (GitHub Actions callers)
+
+Callers that already run on GitHub Actions — reading an `issues`/`pull_request`
+`labeled` event, say — should call `.github/workflows/agent-run-trigger.yml`
+as a reusable workflow instead of building their own decide/dispatch steps:
+
+```yaml
+jobs:
+  trigger:
+    if: contains(fromJSON('["agent:explore","agent:design","agent:implement","agent:review"]'), github.event.label.name)
+    uses: ajorquera/agent-runner/.github/workflows/agent-run-trigger.yml@main
+    secrets:
+      TRIGGER_TOKEN: ${{ secrets.TRIGGER_TOKEN }}
+```
+
+It runs inside the caller's own workflow run, so `github.event` /
+`github.repository` inside it are the caller's — no other inputs needed. The
+caller's job must grant `issues: write` / `pull-requests: write` permissions
+(for the in-progress label) and hold its own `TRIGGER_TOKEN` secret, same
+custody/rotation rules as below. Referenced unpinned (`@main`) for now —
+revisit pinning once more than one caller repo exists.
+
+If the target repo has no `docs/agent-phases/<phase>.md` of its own, the
+agent falls back to this repo's `docs/default-phases/<phase>.md` stubs and
+says so in its outcome comment.
+
+## Direct `repository_dispatch` (non-Actions callers)
 
 ## For callers
 

@@ -1,0 +1,13 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run agent-run-trigger decision tests
+        run: bash scripts/agent-run-trigger-decide.test.sh
