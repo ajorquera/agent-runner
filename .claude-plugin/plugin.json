@@ -1,0 +1,9 @@
+{
+  "name": "agent-runner",
+  "version": "0.1.0",
+  "description": "Define stage of the agent-runner pipeline: turn an idea into a template-compliant GitHub issue that starts a run.",
+  "author": {
+    "name": "Andres"
+  },
+  "repository": "https://github.com/ajorquera/agent-runner"
+}

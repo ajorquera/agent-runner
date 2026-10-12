@@ -1,0 +1,16 @@
+{
+  "name": "agent-runner",
+  "owner": {
+    "name": "Andres"
+  },
+  "metadata": {
+    "description": "The agent-runner pipeline: idea to merge-ready pull request."
+  },
+  "plugins": [
+    {
+      "name": "agent-runner",
+      "source": "./",
+      "description": "Define stage of the agent-runner pipeline."
+    }
+  ]
+}

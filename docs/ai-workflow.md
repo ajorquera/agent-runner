@@ -89,11 +89,11 @@ Define is the `define` skill from the `agent-runner` plugin. It runs in the huma
 
 The skill gets the session ID through Claude Code's `${CLAUDE_SESSION_ID}` substitution, and the plugin's location through `${CLAUDE_PLUGIN_ROOT}`. Both are substituted into the skill text, not set as shell variables, so the skill passes them to its scripts as arguments.
 
-**Prerequisite:** the user-level `grill-me` skill. The skill checks for it at startup and stops with an install hint if it is missing.
+**Prerequisite:** the user-level `grilling` skill. The `/grill-me` command is a user-only alias (`disable-model-invocation: true`) that forwards to it, so the definer calls `grilling` directly. The skill checks for it at startup and stops with an install hint if it is missing. It also stops if the target repo is public (see Constraints).
 
 ### New issue: `/define <prompt>`
 
-1. **Interview.** Run `/grill-me` on the prompt. The definer may call the explorer and prototyper along the way.
+1. **Interview.** Call the `grilling` skill on the prompt. The definer may call the explorer and prototyper along the way.
 2. **Gap check.** Compare the conversation against `template/issue.yml`. List every required section the conversation can't fill (most often the rejected options for the Decision summary, and Out of scope), and ask only about those. Never invent a decision to fill a section.
 3. **Draft.** Generate the trace ID (W3C style, 32 hex characters), read the session ID, propose the type label, and render the full issue from `issue.yml`.
 4. **Confirm.** Show the rendered issue. Create it only on an explicit "yes"; any other reply is an edit request, and the draft is shown again.
@@ -120,10 +120,12 @@ The prototyper pushes each prototype to the target repo as `proto/<slug>-<n>`, a
 
 | Part | Contents | How a target repo uses it |
 | --- | --- | --- |
-| Claude Code plugin | `.claude-plugin/` manifest, the `define` skill (`DEFINER.md`), the explorer and prototyper agents, `template/issue.yml`, helper scripts (issue rendering, trace comment) | Install once with `/plugin install` |
+| Claude Code plugin | `.claude-plugin/` manifest and marketplace, `skills/define/` (`SKILL.md` + `DEFINER.md`), `agents/EXPLORER.md` and `agents/PROTOTYPER.md`, `template/issue.yml`, and the bundled scripts `scripts/check-issue.mjs` (structure check) and `scripts/define-trace.mjs` (trace comment) | `/plugin marketplace add ajorquera/agent-runner`, then `/plugin install agent-runner`; run as `/agent-runner:define` |
 | Reusable workflow | `.github/workflows/pipeline.yml` (`on: workflow_call`): template check, Implement, Review, Publish | A short caller workflow on `issues.opened` and `issues.labeled` that runs `uses: ajorquera/agent-runner/.github/workflows/pipeline.yml@v1` and passes the Anthropic API key as a secret |
 
 `agent-runner` itself stays public, because a public repo's reusable workflow can be called from any repo. Target repos must be private (see Constraints).
+
+Scripts are written in TypeScript under `src/` and bundled with esbuild into self-contained `scripts/*.mjs`, which are committed. Installing a plugin only clones the repo and never runs `npm install`, so the bundles must carry their dependencies. Run `npm run build` after any change under `src/`. The reusable workflow uses the same bundles, so the local and Actions structure checks are the same code.
 
 ## Human touchpoints
 
@@ -155,7 +157,7 @@ There are six agents, and each is defined in its own `<AGENT>.md`. In the headle
 
 | Agent | Stage | Role | May call |
 | --- | --- | --- | --- |
-| definer (`skills/define/SKILL.md` + `DEFINER.md`) | Define | Runs `/grill-me`, explores the codebase, prototypes, writes the issue | explorer, prototyper |
+| definer (`skills/define/SKILL.md` + `DEFINER.md`) | Define | Runs the `grilling` interview, explores the codebase, prototypes, writes the issue | explorer, prototyper |
 | explorer (`EXPLORER.md`) | Any | Read-only codebase search that returns a summary | Nothing (leaf) |
 | prototyper (`PROTOTYPER.md`) | Define | Builds a throwaway prototype on branch `proto/<slug>-<n>` and pushes it | Nothing (leaf) |
 | implementer (`IMPLEMENT.md`) | Implement | Plans, edits code, runs tests and lint | explorer, test-writer |
@@ -303,7 +305,7 @@ Settled in a grilling session before building the Define stage.
 | What does the trigger check? | Type label and trace ID only | Signed trace ID or maintainer-only label: extra complexity; private target repos cover the risk |
 | How is `agent-runner` distributed? | Public tool repo: a Claude Code plugin plus a reusable workflow, versioned together | Copying the skill into each repo, or a user-level install: they drift from the template check |
 | Where is the template defined? | One `template/issue.yml`, read by Define and by the template check | Issue forms or prose in two places: they drift |
-| How does the interview work? | The user-level `grill-me`, then a gap check against `issue.yml` | Bundling its own interview: duplicates a trusted skill |
+| How does the interview work? | The user-level `grilling` (what `/grill-me` forwards to), then a gap check against `issue.yml` | Bundling its own interview: duplicates a trusted skill |
 | How does rework work? | `/define <n>` updates the issue in place and adds `rerun:implement` | Listening to `issues.edited`: every typo fix would start a paid run. A new issue: splits the history. |
 | Where do prototypes live? | Pushed as `proto/<slug>-<n>`, linked in the issue, deleted once it closes; Implement may read them | Local only: Implement can't see them |
 | Are Define's tokens recorded? | Yes, read from the local session transcript; `null` if unreadable | Omitting them: the weekly report can't show what Define costs |
