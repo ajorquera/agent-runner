@@ -5,8 +5,9 @@
 This is a spec for a system that takes an idea from a first conversation to a merge-ready pull request. Every requirement here (budgets, traces, retention) is enforced by code, not by prompts.
 
 - **Runtime:** a hybrid. The Define stage runs interactively in Claude Code, because it needs a human in the conversation. Implement, Review and Publish run headless in GitHub Actions on an orchestrator built with the Claude Agent SDK.
-- **Source of truth:** GitHub (private repo). Every stage reads its input from GitHub and writes its output back, so any stage can be re-run without repeating the whole pipeline.
-- **Output:** a pull request to `main`, linked to its issue and trace ID. Agents never merge; a human always does.
+- **Distribution:** this repo (`agent-runner`) is a tool, not a place where work happens. It ships two things under one version tag: a Claude Code plugin with the Define skill, and a reusable workflow (`workflow_call`) for the headless stages. Each **target repo** installs the plugin and adds a short caller workflow (see Distribution).
+- **Source of truth:** GitHub, in the target repo, which must be private. Every stage reads its input from GitHub and writes its output back, so any stage can be re-run without repeating the whole pipeline.
+- **Output:** a pull request to `main` in the target repo, linked to its issue and trace ID. Agents never merge; a human always does.
 
 ## Pipeline
 
@@ -43,24 +44,30 @@ Review can send work back to Implement up to 3 times, and a failed template chec
 
 | Stage | Runs in | Input | Output |
 | --- | --- | --- | --- |
-| Define | Claude Code (interactive) | A short prompt | An issue that follows the template, with a type label, trace ID, decision summary and session ID |
+| Define | Claude Code (interactive skill) | A short prompt, or an existing issue number on rework | An issue that follows the template, with a type label, trace ID, decision summary and session ID, plus a trace comment |
 | Implement | GitHub Actions | The issue (plus the existing branch on rework) | Branch `<issue#>-<slug>`, the plan as an issue comment, local tests and lint passing, a trace comment |
 | Review | GitHub Actions | The issue and the branch diff | A verdict (`approve` / `changes_requested`), findings as structured comments, a trace comment |
 | Publish | GitHub Actions (script, no LLM) | An approved branch | A PR to `main` with a summary, `Closes #<issue>`, the trace ID and the plan |
 
 ### Trigger
 
-The pipeline starts when the definer agent creates the issue. The workflow runs on `issues.opened` only if all of these are true:
+The pipeline starts when the Define skill creates the issue. Define creates it with the human's own GitHub identity (through `gh`), not a bot. The caller workflow in the target repo runs on `issues.opened` only if both of these are true:
 
-- the author is the pipeline's bot or GitHub App identity,
 - the issue has a type label (`feature`, `bug` or `refactor`),
 - the body contains a trace ID.
 
-Issues opened by hand never start a run. To have one processed, take it through Define.
+Hand-written issues normally lack a trace ID, so they don't start a run; to have one processed, take it through Define. This check is not a security boundary: anyone who can open a labelled issue with a trace ID can start a paid run. That is why target repos must be private, with only trusted collaborators.
+
+The caller workflow also runs on `issues.labeled` for the `rerun:<stage>` labels (see Re-running a stage).
 
 ### Template check
 
-Implement starts with a single cheap call that checks the issue against the template. If the issue fails, the check comments on what is missing, adds `needs-definition` and stops. Re-running Define on that issue updates it instead of creating a new one.
+Implement starts by checking the issue against `template/issue.yml` in two steps:
+
+1. **Structure (script, no LLM):** every required heading is present and non-empty, and the type label and trace ID exist.
+2. **Quality (single cheap call):** the model is given the same `issue.yml` and judges content, for example whether the acceptance criteria are actually testable.
+
+If either step fails, the check comments on what is missing, adds `needs-definition` and stops. Running `/define <issue#>` updates that issue instead of creating a new one (see Define stage).
 
 ### Review loop
 
@@ -76,11 +83,53 @@ Adding a `rerun:<stage>` label (or a workflow dispatch) re-runs that stage from 
 - Implement branches from the latest `main`. Before Publish, the orchestrator rebases onto `main`. A clean rebase re-runs tests and opens the PR; a conflict escalates and is never auto-resolved.
 - The pipeline's job ends when the PR is open. The PR's normal CI is the final check, and keeping the PR up to date is the human's job from there.
 
+## Define stage
+
+Define is the `define` skill from the `agent-runner` plugin. It runs in the human's main Claude Code session, inside the target repo. Claude Code requires a plugin skill's main file to be `skills/define/SKILL.md`, so `SKILL.md` stays short (frontmatter, allowed scripts, the steps below) and points to `DEFINER.md` next to it for the full instructions.
+
+The skill gets the session ID through Claude Code's `${CLAUDE_SESSION_ID}` substitution, and the plugin's location through `${CLAUDE_PLUGIN_ROOT}`. Both are substituted into the skill text, not set as shell variables, so the skill passes them to its scripts as arguments.
+
+**Prerequisite:** the user-level `grill-me` skill. The skill checks for it at startup and stops with an install hint if it is missing.
+
+### New issue: `/define <prompt>`
+
+1. **Interview.** Run `/grill-me` on the prompt. The definer may call the explorer and prototyper along the way.
+2. **Gap check.** Compare the conversation against `template/issue.yml`. List every required section the conversation can't fill (most often the rejected options for the Decision summary, and Out of scope), and ask only about those. Never invent a decision to fill a section.
+3. **Draft.** Generate the trace ID (W3C style, 32 hex characters), read the session ID, propose the type label, and render the full issue from `issue.yml`.
+4. **Confirm.** Show the rendered issue. Create it only on an explicit "yes"; any other reply is an edit request, and the draft is shown again.
+5. **Create.** Create the issue in the current repo (from `gh repo view`) with `gh issue create`, under the human's identity, then post the Define trace comment (see Traceability and storage).
+
+### Rework: `/define <issue#>`
+
+Used after the template check adds `needs-definition`.
+
+1. Read the issue body and the template check's comment.
+2. Run the gap check against the existing issue and interview only about what is missing or rejected.
+3. Show the rewritten issue and wait for an explicit "yes".
+4. Update the body in place, remove `needs-definition` and add `rerun:implement`. The new run gets a new trace ID, linked to the old one through `previous_trace_id`.
+
+Editing an issue by hand never starts a run, because the caller workflow doesn't listen to `issues.edited`.
+
+### Prototypes
+
+The prototyper pushes each prototype to the target repo as `proto/<slug>-<n>`, and the issue's Links section lists them. Implement may read them. A scheduled job deletes `proto/*` branches whose issue is closed.
+
+## Distribution
+
+`agent-runner` ships both halves of the pipeline from one repo, versioned together with tags (`v1`, `v1.2.0`, …), so an issue written by Define always matches what that version's template check expects.
+
+| Part | Contents | How a target repo uses it |
+| --- | --- | --- |
+| Claude Code plugin | `.claude-plugin/` manifest, the `define` skill (`DEFINER.md`), the explorer and prototyper agents, `template/issue.yml`, helper scripts (issue rendering, trace comment) | Install once with `/plugin install` |
+| Reusable workflow | `.github/workflows/pipeline.yml` (`on: workflow_call`): template check, Implement, Review, Publish | A short caller workflow on `issues.opened` and `issues.labeled` that runs `uses: ajorquera/agent-runner/.github/workflows/pipeline.yml@v1` and passes the Anthropic API key as a secret |
+
+`agent-runner` itself stays public, because a public repo's reusable workflow can be called from any repo. Target repos must be private (see Constraints).
+
 ## Human touchpoints
 
 There are two required human actions and one forced escalation. Nothing else in the pipeline waits for a person.
 
-1. **Confirm in Define (start gate).** The definer creates the issue only after the human explicitly confirms the final draft in the conversation. That confirmation replaces the vague exit criterion "no remaining doubt".
+1. **Confirm in Define (start gate).** The Define skill shows the fully rendered issue and creates it only after the human replies with an explicit "yes". Any other reply is treated as an edit request. That confirmation replaces the vague exit criterion "no remaining doubt".
 2. **Merge (end gate).** A human reviews and merges every PR. Branch protection on `main` requires human approval, so agents can't merge.
 3. **Escalation.** The run stops when any of these happens: the review loop reaches 3 rounds, a budget runs out at the root, or the rebase before Publish conflicts. When it stops, the orchestrator pushes the branch as WIP, posts a trace comment with the trace ID, and adds the `needs-human` label.
 
@@ -88,7 +137,7 @@ There is no gate for approving the plan. The plan is posted on the issue and inc
 
 ## Issue template
 
-Every issue from Define must have these sections. The template check at the start of Implement checks them.
+Every issue from Define must have these sections. They are defined once, in `template/issue.yml` (heading, required flag, one-line description of what belongs there). The Define skill renders issues from that file and the template check grades against it, so the two can't drift apart; both ship under the same version tag.
 
 | Section | Contents |
 | --- | --- |
@@ -97,18 +146,18 @@ Every issue from Define must have these sections. The template check at the star
 | Decision summary | Decisions made in Define, including options that were rejected and why. This is the permanent record of the conversation. |
 | Acceptance criteria | Concrete, testable conditions for done |
 | Out of scope | What we explicitly decided not to do |
-| Links | Trace ID, Claude Code session ID of the Define conversation, prototype branches |
+| Links | Trace ID, Claude Code session ID of the Define conversation, prototype branches (`proto/<slug>-<n>`) |
 | Type label | `feature`, `bug` or `refactor`. It decides which extra instructions Implement and Review get (see Agents). |
 
 ## Agents
 
-There are six agents, and each is defined in its own `<AGENT>.md`. The orchestrator enforces an allow-list of which agent may call which. An agent can't spawn anything outside its row, so an implementer can't spawn another implementer.
+There are six agents, and each is defined in its own `<AGENT>.md`. In the headless stages the orchestrator enforces an allow-list of which agent may call which. An agent can't spawn anything outside its row, so an implementer can't spawn another implementer. The definer is a skill, not a subagent, because a subagent can't hold a conversation with the human; its row is guidance in its instructions, not enforced by code.
 
 | Agent | Stage | Role | May call |
 | --- | --- | --- | --- |
-| definer (`DEFINER.md`) | Define | Runs `/grill-me`, explores the codebase, prototypes, writes the issue | explorer, prototyper |
+| definer (`skills/define/SKILL.md` + `DEFINER.md`) | Define | Runs `/grill-me`, explores the codebase, prototypes, writes the issue | explorer, prototyper |
 | explorer (`EXPLORER.md`) | Any | Read-only codebase search that returns a summary | Nothing (leaf) |
-| prototyper (`PROTOTYPER.md`) | Define | Builds a throwaway prototype on a scratch branch | Nothing (leaf) |
+| prototyper (`PROTOTYPER.md`) | Define | Builds a throwaway prototype on branch `proto/<slug>-<n>` and pushes it | Nothing (leaf) |
 | implementer (`IMPLEMENT.md`) | Implement | Plans, edits code, runs tests and lint | explorer, test-writer |
 | test-writer (`TEST-WRITER.md`) | Implement | Writes tests for the acceptance criteria | explorer |
 | reviewer (`REVIEWER.md`) | Review | Checks the change against acceptance criteria, conventions and coverage | explorer |
@@ -184,9 +233,13 @@ Each pipeline run gets a unique `trace_id`. Every agent call is a span with `spa
 
 The path PR → review → plan → issue → decisions works forever without opening a transcript. After 30 days the transcript links stop working, which is expected.
 
+### Define's trace comment
+
+Define has no orchestrator, so a bundled script posts its trace comment right after the issue is created. It finds the session's transcript at `~/.claude/projects/<project>/<session-id>.jsonl` (or under `CLAUDE_CONFIG_DIR`, if that is set) and adds up input (including cache reads) and output tokens for the session so far, following the counting rule in Budgets. `calls` is the number of subagents spawned. If the transcript can't be read or its format has changed, the script still posts the comment, with `"tokens": null`, and never blocks issue creation. Claude Code documents the transcript format as internal and subject to change, and doesn't document the token fields at all, so this fallback is expected to be needed sometimes.
+
 ### Trace comment format
 
-Each stage posts one bot comment with a collapsible, machine-readable block:
+Each stage posts one comment with a collapsible, machine-readable block. The headless stages post it as the workflow's bot; Define posts it as the human.
 
 ```
 <details><summary>Trace: implement · 412k tokens · 7 calls · ok</summary>
@@ -201,8 +254,8 @@ Repo collaborators can edit these comments, so treat them as records, not tamper
 
 ### Constraints
 
-- The repo must stay private. Anyone with read access can download the artifacts.
-- The repo or org artifact retention limit must not be set below 30 days.
+- Each target repo must stay private, with only trusted collaborators. Anyone with read access can download the artifacts, and anyone who can open a labelled issue with a trace ID can start a paid run (see Trigger). The `agent-runner` tool repo itself is public.
+- The target repo's (or its org's) artifact retention limit must not be set below 30 days.
 
 ## Security
 
@@ -211,6 +264,7 @@ Even a confused or compromised agent can change only its own branch, and a human
 - **The orchestrator owns git.** Agents edit files in the workspace. The orchestrator commits and pushes, only to the run's branch `<issue#>-<slug>`. Agents never hold a token that can push.
 - **Minimal token permissions:** `contents: write` (for the orchestrator's push), `issues: write` and `pull-requests: write`. Nothing else.
 - **Branch protection on `main`** requires human approval.
+- **Define runs as the human.** It creates issues and pushes `proto/*` branches with the human's own `gh` credentials, in an interactive session the human is watching. No bot credentials are kept on the human's machine.
 - **Agent environment:** only the Anthropic API key is passed in. There are no deploy or cloud secrets. Test credentials are limited to dedicated test accounts.
 - **Network:** package registries and the Anthropic API are allowed; everything else is blocked where the runner setup allows it.
 - **The reviewer is read-only.** It has no write tools and can't run arbitrary commands; at most it can run the test suite.
@@ -237,3 +291,19 @@ All four open questions from the first draft are now answered.
 | What are the concrete budget values per stage? | Implementer 3M tokens / 10 calls, reviewer 1M / 4, explorer 300k, a 10M cap per run; recalibrated after about 20 runs | Budgets |
 | Where must a human approve before the pipeline continues? | Confirming the issue in Define, and merging the PR. Escalation on an exhausted review loop, an exhausted budget or a rebase conflict. | Human touchpoints |
 | Does each issue label map to a different setup? | Only the instructions change; budgets can be set per label but start the same | Agents |
+
+### Define design decisions
+
+Settled in a grilling session before building the Define stage.
+
+| Decision | Answer | Rejected and why |
+| --- | --- | --- |
+| How is the definer packaged? | A skill in the main Claude Code session | Subagent: can't talk to the human. Separate SDK program: loses the session ID and `/resume`. |
+| Who creates the issue? | The human, through `gh` | Bot via workflow dispatch or a local App token: more moving parts for a single-maintainer setup |
+| What does the trigger check? | Type label and trace ID only | Signed trace ID or maintainer-only label: extra complexity; private target repos cover the risk |
+| How is `agent-runner` distributed? | Public tool repo: a Claude Code plugin plus a reusable workflow, versioned together | Copying the skill into each repo, or a user-level install: they drift from the template check |
+| Where is the template defined? | One `template/issue.yml`, read by Define and by the template check | Issue forms or prose in two places: they drift |
+| How does the interview work? | The user-level `grill-me`, then a gap check against `issue.yml` | Bundling its own interview: duplicates a trusted skill |
+| How does rework work? | `/define <n>` updates the issue in place and adds `rerun:implement` | Listening to `issues.edited`: every typo fix would start a paid run. A new issue: splits the history. |
+| Where do prototypes live? | Pushed as `proto/<slug>-<n>`, linked in the issue, deleted once it closes; Implement may read them | Local only: Implement can't see them |
+| Are Define's tokens recorded? | Yes, read from the local session transcript; `null` if unreadable | Omitting them: the weekly report can't show what Define costs |
