@@ -1,7 +1,5 @@
 # AI Workflow
 
-Oct 12, 2026 · @Andres Jorquera
-
 ## Overview
 
 This is a spec for a system that takes an idea from a first conversation to a merge-ready pull request. Every requirement here (budgets, traces, retention) is enforced by code, not by prompts.
@@ -14,7 +12,32 @@ This is a spec for a system that takes an idea from a first conversation to a me
 
 The pipeline has four stages: Define, Implement, Review and Publish. Each one has a single input and a single output, both stored in GitHub.
 
-> Diagram: Pipeline flow · 4 stages, 2 loops, 2 human endpoints (see the [source doc](https://claude.ai/artifact/BJowsrC1xwYCXD1uHNke25)).
+**Every run ends at a human: a merge or an escalation.**
+
+```mermaid
+flowchart LR
+    define["<b>Define</b><br/>Claude Code<br/>human confirms"]
+    implement["<b>Implement</b><br/>GitHub Actions<br/>plan, code, tests"]
+    review["<b>Review</b><br/>GitHub Actions<br/>fresh context"]
+    publish["<b>Publish</b><br/>script, no LLM<br/>rebase, open PR"]
+    escalate["<b>Escalate: needs-human</b><br/>budget out, review loop at 3,<br/>or rebase conflict"]
+    merge(["<b>Human merges</b><br/>PR to main"])
+
+    define -- issue --> implement
+    implement -- branch --> review
+    review -- approve --> publish
+    review -- "changes requested, max 3 rounds" --> implement
+    implement -- fails template check --> define
+    implement --> escalate
+    review --> escalate
+    publish --> escalate
+    publish -- PR opened --> merge
+
+    classDef human stroke-width:2px
+    class merge human
+```
+
+*Pipeline flow · 4 stages, 2 loops, 2 human endpoints*
 
 Review can send work back to Implement up to 3 times, and a failed template check sends the issue back to Define. Every other path ends with a human merging the PR or picking up an escalation.
 
