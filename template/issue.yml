@@ -1,0 +1,66 @@
+# The issue template. Single source of truth for:
+#   - the Define skill, which renders issues from it
+#   - the template check at the start of Implement (structure script + quality call)
+# Change it only together with both; they ship under the same version tag.
+
+version: 1
+
+# Exactly one of these labels must be on the issue.
+type_labels:
+  - feature
+  - bug
+  - refactor
+
+# Sections, rendered in this order as `## <heading>`.
+# `description` tells Define what to ask for and the quality check what to expect.
+sections:
+  - heading: Problem / motivation
+    required: true
+    description: Why this matters, and what goes wrong or is missing today.
+
+  - heading: Proposed solution
+    required: true
+    description: >-
+      The agreed design, specific enough to implement without reading the
+      Define conversation. Prototype branches are evidence, not a substitute.
+
+  - heading: Decision summary
+    required: true
+    description: >-
+      Every decision made in Define, each with the options rejected and why.
+      This is the permanent record of the conversation.
+
+  - heading: Acceptance criteria
+    required: true
+    description: >-
+      Concrete, testable conditions for done, as a checklist. Each one must be
+      checkable by a test or a command. For a bug, include the reproduction.
+
+  - heading: Out of scope
+    required: true
+    description: What we explicitly decided not to do. Write "None" only if that was agreed.
+
+  - heading: Links
+    required: true
+    description: Trace ID, Define session ID, and any prototype branches.
+    # Filled in by the render script, not asked about in the interview.
+    generated: true
+
+# Machine-readable fields inside the Links section. The trigger and the
+# structure check find them with these patterns.
+fields:
+  trace_id:
+    line: "Trace ID: `{value}`"
+    pattern: "^Trace ID: `([0-9a-f]{32})`$"
+  session_id:
+    line: "Define session: `{value}`"
+    pattern: "^Define session: `([0-9a-f-]{36})`$"
+  previous_trace_id:
+    line: "Previous trace ID: `{value}`"
+    pattern: "^Previous trace ID: `([0-9a-f]{32})`$"
+    optional: true
+  prototype:
+    line: "Prototype: `{value}`"
+    pattern: "^Prototype: `(proto/[a-z0-9-]+)`$"
+    optional: true
+    repeated: true
