@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="agent-runner logo" width="320">
+</p>
+
 # agent-runner
 
 **Turn an idea into a merge-ready pull request, with AI agents doing the work and a human making the decisions.**
