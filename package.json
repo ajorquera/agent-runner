@@ -7,11 +7,12 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "build": "esbuild src/check-issue.ts src/define-trace.ts --bundle --platform=node --format=esm --target=node22 --outdir=scripts --out-extension:.js=.mjs \"--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
+    "build": "esbuild src/check-issue.ts src/check-quality.ts src/define-trace.ts --bundle --platform=node --format=esm --target=node22 --outdir=scripts --out-extension:.js=.mjs \"--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "test": "node --test 'src/**/*.test.ts'",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.0.0",
     "@types/node": "^24.0.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",

@@ -1,8 +1,8 @@
 # The headless half of the pipeline: template check, Implement, Review, Publish.
 # Target repos call it from a short caller workflow (see docs/ai-workflow.md, Distribution).
 #
-# Built so far: the structure part of the template check.
-# Next: the quality call, then the Implement, Review and Publish jobs.
+# Built so far: the template check (structure script, then the quality call).
+# Next: the Implement, Review and Publish jobs.
 
 name: pipeline
 
@@ -36,7 +36,7 @@ jobs:
       contents: read
       issues: write
     outputs:
-      passed: ${{ steps.structure.outputs.passed }}
+      passed: ${{ steps.structure.outputs.passed == 'true' && steps.quality.outputs.passed == 'true' }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -71,18 +71,43 @@ jobs:
         with:
           node-version: 22
 
+      - name: Fetch issue
+        run: |
+          gh issue view "$ISSUE" --json body --jq .body > "$RUNNER_TEMP/body.md"
+          gh issue view "$ISSUE" --json labels --jq '.labels[].name' > "$RUNNER_TEMP/labels.txt"
+
+      # Both checks write problems.txt, one `- ...` line per problem, and set passed.
+      # Exit 1 means problems with the issue; any other failure is a bug or an outage and fails the job.
       - name: Structure check
         id: structure
         run: |
-          gh issue view "$ISSUE" --json body --jq .body > "$RUNNER_TEMP/body.md"
-          mapfile -t labels < <(gh issue view "$ISSUE" --json labels --jq '.labels[].name')
-
+          mapfile -t labels < "$RUNNER_TEMP/labels.txt"
           if node .agent-runner/scripts/check-issue.mjs .agent-runner/template/issue.yml \
               "$RUNNER_TEMP/body.md" "${labels[@]}" > "$RUNNER_TEMP/problems.txt"; then
             echo "passed=true" >> "$GITHUB_OUTPUT"
           else
             code=$?
-            # Exit 2 is bad usage: a bug here, not a problem with the issue.
+            if [ "$code" -ne 1 ]; then cat "$RUNNER_TEMP/problems.txt"; exit "$code"; fi
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$RUNNER_TEMP/problems.txt"
+
+      - name: Quality check
+        id: quality
+        if: steps.structure.outputs.passed == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # The structure check passed, so exactly one label is a type label from the template.
+          type_labels=$(sed -n '/^type_labels:/,/^[^ ]/s/^  - //p' .agent-runner/template/issue.yml)
+          type_label=$(grep -Fx -f <(echo "$type_labels") "$RUNNER_TEMP/labels.txt")
+
+          if node .agent-runner/scripts/check-quality.mjs .agent-runner/template/issue.yml \
+              "$RUNNER_TEMP/body.md" "$type_label" > "$RUNNER_TEMP/problems.txt"; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            code=$?
+            # Exit 3 means the model call failed: fail visibly instead of sending a fine issue back.
             if [ "$code" -ne 1 ]; then cat "$RUNNER_TEMP/problems.txt"; exit "$code"; fi
             echo "passed=false" >> "$GITHUB_OUTPUT"
           fi
@@ -90,7 +115,7 @@ jobs:
 
       # Define's rework mode reads the latest comment from this check, so keep the heading stable.
       - name: Send back to Define
-        if: steps.structure.outputs.passed == 'false'
+        if: steps.structure.outputs.passed == 'false' || steps.quality.outputs.passed == 'false'
         run: |
           {
             echo "### Template check failed"
