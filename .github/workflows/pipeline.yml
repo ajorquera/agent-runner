@@ -1,0 +1,105 @@
+# The headless half of the pipeline: template check, Implement, Review, Publish.
+# Target repos call it from a short caller workflow (see docs/ai-workflow.md, Distribution).
+#
+# Built so far: the structure part of the template check.
+# Next: the quality call, then the Implement, Review and Publish jobs.
+
+name: pipeline
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        description: The issue to run the pipeline on.
+        type: number
+        required: true
+      stage:
+        description: >-
+          Stage to run: empty to start from the beginning, or a stage name with
+          or without the `rerun:` prefix (implement, review, publish).
+        type: string
+        default: ""
+      agent_runner_ref:
+        description: >-
+          The agent-runner ref to load scripts and the template from. Keep it
+          equal to the tag in the caller's `uses:` line.
+        type: string
+        default: v1
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+jobs:
+  template-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      passed: ${{ steps.structure.outputs.passed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ISSUE: ${{ inputs.issue_number }}
+      STAGE: ${{ inputs.stage }}
+    steps:
+      # Remove the rerun label first, so adding it again later fires `labeled` again.
+      - name: Clear rerun label
+        if: startsWith(inputs.stage, 'rerun:')
+        run: gh issue edit "$ISSUE" --remove-label "$STAGE"
+
+      - name: Check stage
+        run: |
+          case "${STAGE#rerun:}" in
+            ""|implement) ;;
+            review|publish)
+              echo "::error::The ${STAGE#rerun:} stage is not built yet."
+              exit 1 ;;
+            *)
+              echo "::error::Unknown stage \"$STAGE\"."
+              exit 1 ;;
+          esac
+
+      - name: Check out agent-runner
+        uses: actions/checkout@v4
+        with:
+          repository: ajorquera/agent-runner
+          ref: ${{ inputs.agent_runner_ref }}
+          path: .agent-runner
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Structure check
+        id: structure
+        run: |
+          gh issue view "$ISSUE" --json body --jq .body > "$RUNNER_TEMP/body.md"
+          mapfile -t labels < <(gh issue view "$ISSUE" --json labels --jq '.labels[].name')
+
+          if node .agent-runner/scripts/check-issue.mjs .agent-runner/template/issue.yml \
+              "$RUNNER_TEMP/body.md" "${labels[@]}" > "$RUNNER_TEMP/problems.txt"; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            code=$?
+            # Exit 2 is bad usage: a bug here, not a problem with the issue.
+            if [ "$code" -ne 1 ]; then cat "$RUNNER_TEMP/problems.txt"; exit "$code"; fi
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$RUNNER_TEMP/problems.txt"
+
+      # Define's rework mode reads the latest comment from this check, so keep the heading stable.
+      - name: Send back to Define
+        if: steps.structure.outputs.passed == 'false'
+        run: |
+          {
+            echo "### Template check failed"
+            echo
+            cat "$RUNNER_TEMP/problems.txt"
+            echo
+            echo "Run \`/agent-runner:define $ISSUE\` in Claude Code to fix this issue."
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/comment.md"
+          gh label create needs-definition --color d93f0b \
+            --description "The agent-runner template check sent this issue back to Define" --force
+          gh issue edit "$ISSUE" --add-label needs-definition
