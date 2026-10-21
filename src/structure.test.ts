@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { checkStructure } from "./structure.ts";
-import { loadTemplate } from "./template.ts";
+import { findTypeLabels, loadTemplate } from "./template.ts";
 
 const template = loadTemplate(new URL("../template/issue.yml", import.meta.url).pathname);
 const TRACE = "0123456789abcdef0123456789abcdef";
@@ -66,4 +66,10 @@ test("links: missing, malformed and duplicated fields", () => {
 test("a trace ID outside Links doesn't count", () => {
   const errors = checkStructure(body({ "Proposed solution": `Trace ID: \`${TRACE}\``, Links: `Define session: \`${SESSION}\`` }), ["bug"], template);
   assert.match(errors[0], /missing trace_id/);
+});
+
+test("findTypeLabels keeps only the template's type labels", () => {
+  assert.deepEqual(findTypeLabels(["good first issue", "bug"], template), ["bug"]);
+  assert.deepEqual(findTypeLabels(["bug", "feature"], template), ["bug", "feature"]);
+  assert.deepEqual(findTypeLabels([], template), []);
 });

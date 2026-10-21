@@ -7374,6 +7374,9 @@ import { readFileSync } from "node:fs";
 function loadTemplate(path) {
   return (0, import_yaml.parse)(readFileSync(path, "utf8"));
 }
+function findTypeLabels(labels2, template) {
+  return labels2.filter((label) => template.type_labels.includes(label));
+}
 function splitSections(body) {
   const sections = [];
   for (const line of body.split(/\r?\n/)) {
@@ -7392,7 +7395,7 @@ function findField(body, field) {
 var LINKS = "Links";
 function checkStructure(body, labels2, template) {
   const errors2 = [];
-  const typeLabels = labels2.filter((label) => template.type_labels.includes(label));
+  const typeLabels = findTypeLabels(labels2, template);
   if (typeLabels.length !== 1) {
     errors2.push(
       `Expected exactly one type label (${template.type_labels.join(", ")}), found ${typeLabels.length === 0 ? "none" : typeLabels.join(", ")}.`
@@ -7436,7 +7439,13 @@ if (!templatePath || !bodyPath) {
   console.error("Usage: check-issue.mjs <template.yml> <body-file> [label...]");
   process.exit(2);
 }
-var errors = checkStructure(readFileSync2(bodyPath, "utf8"), labels, loadTemplate(templatePath));
+var errors;
+try {
+  errors = checkStructure(readFileSync2(bodyPath, "utf8"), labels, loadTemplate(templatePath));
+} catch (error) {
+  console.error(`Structure check could not run: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(3);
+}
 if (errors.length > 0) {
   for (const error of errors) console.log(`- ${error}`);
   process.exit(1);

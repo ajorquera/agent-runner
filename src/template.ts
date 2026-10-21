@@ -26,6 +26,11 @@ export function loadTemplate(path: string): Template {
   return parse(readFileSync(path, "utf8")) as Template;
 }
 
+/** The labels that are type labels from the template. A valid issue has exactly one. */
+export function findTypeLabels(labels: string[], template: Template): string[] {
+  return labels.filter((label) => template.type_labels.includes(label));
+}
+
 /** Splits a Markdown body into `## heading` sections, in order. Text before the first heading is dropped. */
 export function splitSections(body: string): { heading: string; content: string }[] {
   const sections: { heading: string; content: string }[] = [];

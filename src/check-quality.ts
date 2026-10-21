@@ -1,29 +1,36 @@
-// Usage: check-quality.mjs <template.yml> <body-file> <type-label>
+// Usage: check-quality.mjs <template.yml> <body-file> [label...]
 // Reads ANTHROPIC_API_KEY. Exits 0 if the issue passes the quality check, 1 with one problem per line if not,
-// 2 on bad usage, 3 if the model call fails (an infrastructure error, not a problem with the issue).
+// 2 on bad usage (including not exactly one type label: the structure check runs first, so that is a bug),
+// 3 if the check can't run (an unreadable file, a broken template, a failed model call).
+// Exit 1 only ever means problems with the issue.
 import { readFileSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import { MAX_TOKENS, MODEL, responseText, runQualityCheck, verdictSchema, type CallModel } from "./quality.ts";
-import { loadTemplate, type Template } from "./template.ts";
+import { findTypeLabels, loadTemplate, type Template } from "./template.ts";
 
-const [templatePath, bodyPath, typeLabel, ...rest] = process.argv.slice(2);
-if (!templatePath || !bodyPath || !typeLabel || rest.length > 0) {
-  console.error("Usage: check-quality.mjs <template.yml> <body-file> <type-label>");
+const [templatePath, bodyPath, ...labels] = process.argv.slice(2);
+if (!templatePath || !bodyPath) {
+  console.error("Usage: check-quality.mjs <template.yml> <body-file> [label...]");
   process.exit(2);
 }
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("ANTHROPIC_API_KEY is not set.");
   process.exit(2);
 }
+
 let template: Template;
+let body: string;
 try {
   template = loadTemplate(templatePath);
+  body = readFileSync(bodyPath, "utf8");
 } catch (error) {
-  console.error(`Can't read the template: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(2);
+  console.error(`Quality check could not run: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(3);
 }
-if (!template.type_labels.includes(typeLabel)) {
-  console.error(`Unknown type label "${typeLabel}". Expected one of: ${template.type_labels.join(", ")}.`);
+
+const typeLabels = findTypeLabels(labels, template);
+if (typeLabels.length !== 1) {
+  console.error(`Expected exactly one type label (${template.type_labels.join(", ")}), found ${typeLabels.join(", ") || "none"}. Run the structure check first.`);
   process.exit(2);
 }
 
@@ -39,15 +46,7 @@ const callModel: CallModel = async (prompt) =>
     }),
   );
 
-let body: string;
-try {
-  body = readFileSync(bodyPath, "utf8");
-} catch (error) {
-  console.error(`Can't read the body file: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(2);
-}
-
-const outcome = await runQualityCheck(body, typeLabel, template, callModel);
+const outcome = await runQualityCheck(body, typeLabels[0], template, callModel);
 for (const line of outcome.stdout) console.log(line);
 for (const line of outcome.stderr) console.error(line);
 process.exit(outcome.code);

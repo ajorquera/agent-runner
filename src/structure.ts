@@ -1,4 +1,4 @@
-import { findField, splitSections, type Template } from "./template.ts";
+import { findField, findTypeLabels, splitSections, type Template } from "./template.ts";
 
 const LINKS = "Links";
 
@@ -10,7 +10,7 @@ const LINKS = "Links";
 export function checkStructure(body: string, labels: string[], template: Template): string[] {
   const errors: string[] = [];
 
-  const typeLabels = labels.filter((label) => template.type_labels.includes(label));
+  const typeLabels = findTypeLabels(labels, template);
   if (typeLabels.length !== 1) {
     errors.push(
       `Expected exactly one type label (${template.type_labels.join(", ")}), found ${typeLabels.length === 0 ? "none" : typeLabels.join(", ")}.`,
